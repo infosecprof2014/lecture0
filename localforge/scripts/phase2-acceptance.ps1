@@ -11,8 +11,12 @@
 
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent $PSScriptRoot)
+    [string]$Root = ''
 )
+
+# Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults, so
+# work out the D:\LocalForgeAI folder (parent of scripts\) here instead.
+if (-not $Root) { $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 
 $ErrorActionPreference = 'Continue'
 Add-Type -AssemblyName System.Net.Http
