@@ -96,7 +96,8 @@ function Install-WithWinget([string]$Label, [string]$Id, [string[]]$Extra) {
     if (-not (Confirm-Yes $Label $src $i.Size)) { Say "  Skipped $Label."; return $false }
     $wgArgs = @('install', '--id', $Id, '--exact', '--source', 'winget',
               '--accept-package-agreements', '--accept-source-agreements') + $Extra
-    & winget @wgArgs
+    # Out-Host keeps winget's output from becoming this function's return value.
+    & winget @wgArgs | Out-Host
     $code = $LASTEXITCODE
     Update-SessionPath
     if ($code -ne 0) { Say "  winget exited with code $code for $Label." }

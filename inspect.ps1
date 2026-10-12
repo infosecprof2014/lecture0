@@ -217,42 +217,48 @@ if ($driveOk) {
 # ---------------------------------------------------------------- Tools
 Write-Section 'Tools (check only)'
 
+# Prints its result line and leaves the tool path in $script:ToolPath. It must not
+# return a value: anything a function outputs, including Write-Item lines, would be
+# captured by an assignment like $x = Get-ToolVersion ... instead of printed.
 function Get-ToolVersion([string]$Label, [string]$Cmd, [string[]]$VersionArgs) {
+    $script:ToolPath = $null
     $c = Get-Command $Cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $c) { Write-Item $Label 'missing'; return $null }
+    if (-not $c) { Write-Item $Label 'missing'; return }
     # The Microsoft Store "python" stub lives in WindowsApps and is not a real install.
     if ($c.Source -like '*\Microsoft\WindowsApps\*' -and (Get-Item $c.Source -ErrorAction SilentlyContinue).Length -eq 0) {
         $r = Invoke-Quiet $c.Source $VersionArgs
         if ($r.ExitCode -ne 0 -or $r.Text -match 'was not found|Microsoft Store') {
             Write-Item $Label ('missing (only the Microsoft Store alias at ' + $c.Source + ')')
-            return $null
+            return
         }
     }
     $r = Invoke-Quiet $c.Source $VersionArgs
     $first = ($r.Text -split "`r?`n" | Where-Object { $_ -match '\S' } | Select-Object -First 1)
     if ($r.ExitCode -ne 0 -and -not $first) { $first = "error (exit $($r.ExitCode))" }
     Write-Item $Label ('{0}   [{1}]' -f $first, $c.Source)
-    return $c.Source
+    $script:ToolPath = $c.Source
 }
 
-$pyPath = Get-ToolVersion 'Python' 'python' @('--version')
-$pyLauncher = Get-ToolVersion 'Python launcher (py)' 'py' @('--version')
+Get-ToolVersion 'Python' 'python' @('--version')
+$pyPath = $script:ToolPath
+Get-ToolVersion 'Python launcher (py)' 'py' @('--version')
 if ($pyPath) {
     $r = Invoke-Quiet $pyPath @('-m', 'pip', '--version')
     if ($r.ExitCode -eq 0) { Write-Item 'pip' (($r.Text -split "`r?`n")[0]) }
     else { Write-Item 'pip' 'missing (python -m pip failed)' }
 } elseif (Get-Command pip -CommandType Application -ErrorAction SilentlyContinue) {
-    Get-ToolVersion 'pip' 'pip' @('--version') | Out-Null
+    Get-ToolVersion 'pip' 'pip' @('--version')
 } else {
     Write-Item 'pip' 'missing'
 }
-Get-ToolVersion 'Git' 'git' @('--version') | Out-Null
-$ollamaPath = Get-ToolVersion 'Ollama' 'ollama' @('--version')
-if (-not $ollamaPath) {
+Get-ToolVersion 'Git' 'git' @('--version')
+Get-ToolVersion 'Ollama' 'ollama' @('--version')
+$ollamaPath = $script:ToolPath
+if (-not $ollamaPath -and $env:LOCALAPPDATA) {
     $guess = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
     if (Test-Path -LiteralPath $guess) { Write-Item 'Ollama (not on PATH)' $guess; $ollamaPath = $guess }
 }
-Get-ToolVersion 'Node.js' 'node' @('--version') | Out-Null
+Get-ToolVersion 'Node.js' 'node' @('--version')
 
 # ---------------------------------------------------------------- Ollama models
 Write-Section 'Ollama models'
