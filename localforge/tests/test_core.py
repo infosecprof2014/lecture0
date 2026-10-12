@@ -129,17 +129,18 @@ def test_only_one_model_kept_loaded(client, fake):
 
 
 def test_one_chat_at_a_time(client):
-    import time
-    client.app.state.busy_since = time.monotonic()
+    assert client.app.state.model_lock.try_acquire("other")
     status, events = read_stream(client, {"message": "Say OK"})
     assert status == 429 and events[0]["error"] == "busy"
 
 
 def test_stale_busy_flag_expires(client, settings):
     import time
-    # Started longer ago than request_timeout_s. (Not 0.0: the monotonic clock counts
-    # from boot, so 0.0 is "recent" on a machine that started a few minutes ago.)
-    client.app.state.busy_since = time.monotonic() - settings.request_timeout_s - 1
+    lock = client.app.state.model_lock
+    assert lock.try_acquire("other")
+    # Last activity longer ago than request_timeout_s. (Not 0.0: the monotonic clock
+    # counts from boot, so 0.0 is "recent" on a machine that started a few minutes ago.)
+    lock._last_activity = time.monotonic() - settings.request_timeout_s - 1
     status, _ = read_stream(client, {"message": "Say OK"})
     assert status == 200
 

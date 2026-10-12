@@ -14,6 +14,11 @@ from .logging_setup import setup_logging
 
 def port_free(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as s:
+        # Match uvicorn: on Linux/macOS, ports still closing from earlier connections
+        # (TIME_WAIT) must not count as "in use". On Windows SO_REUSEADDR would let us
+        # bind a port another program is listening on, so it is left off there.
+        if sys.platform != "win32":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
             return True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -22,6 +23,9 @@ class FakeOllama:
         self.reply = ["Hel", "lo", " there", "!"]
         self.fail_after: int | None = None  # drop the connection after N chunks
         self.chat_requests: list[dict] = []
+        # Answers for agent calls, used in order (a string, or a callable(request_body) -> str).
+        self.scripted: list = []
+        self.chunk_delay_s = 0.0
         self.unloaded: list[str] = []
 
     def transport(self) -> httpx.MockTransport:
@@ -48,16 +52,23 @@ class FakeOllama:
             self.chat_requests.append(body)
             if body["model"] not in self.loaded:
                 self.loaded.append(body["model"])
-            return httpx.Response(200, stream=_ChatStream(self.reply, self.fail_after, request))
+            parts = self.reply
+            if self.scripted:
+                answer = self.scripted.pop(0)
+                answer = answer(body) if callable(answer) else answer
+                parts = [answer[i:i + 20] for i in range(0, len(answer), 20)] or [""]
+            return httpx.Response(200, stream=_ChatStream(parts, self.fail_after, request, self.chunk_delay_s))
         return httpx.Response(404, json={"error": "not found"})
 
 
 class _ChatStream(httpx.AsyncByteStream):
-    def __init__(self, parts: list[str], fail_after: int | None, request: httpx.Request):
-        self.parts, self.fail_after, self.request = parts, fail_after, request
+    def __init__(self, parts: list[str], fail_after: int | None, request: httpx.Request, delay_s: float = 0.0):
+        self.parts, self.fail_after, self.request, self.delay_s = parts, fail_after, request, delay_s
 
     async def __aiter__(self):
         for i, part in enumerate(self.parts):
+            if self.delay_s:
+                await asyncio.sleep(self.delay_s)
             if self.fail_after is not None and i >= self.fail_after:
                 raise httpx.ReadError("Connection reset", request=self.request)
             yield (json.dumps({"message": {"role": "assistant", "content": part}, "done": False}) + "\n").encode()

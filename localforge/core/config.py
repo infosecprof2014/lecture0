@@ -31,6 +31,14 @@ class Settings:
     log_path: str = "logs/core.log"
     log_max_mb: int = 5
     log_backups: int = 5
+    # Agents (Phase 3)
+    max_plan_steps: int = 5
+    max_revisions: int = 2
+    max_task_chars: int = 2000
+    planner_max_tokens: int = 400
+    coder_max_tokens: int = 700
+    reviewer_max_tokens: int = 300
+    agent_temperature: float = 0.2
 
     def resolve(self, relative: str) -> Path:
         p = Path(relative)
@@ -68,7 +76,10 @@ def load_settings(path: Path | str | None = None) -> Settings:
     defaults = Settings()
     for name, value in raw.items():
         expected = type(getattr(defaults, name))
-        # bool is a subclass of int; reject it for numeric settings.
+        # bool is a subclass of int; reject it for numeric settings. Whole numbers are
+        # fine where a decimal is expected (e.g. "agent_temperature": 0).
+        if expected is float and isinstance(value, int) and not isinstance(value, bool):
+            raw[name] = value = float(value)
         if not isinstance(value, expected) or isinstance(value, bool):
             raise SettingsError(f"Setting '{name}' must be {expected.__name__}, got {value!r}")
 
@@ -79,9 +90,14 @@ def load_settings(path: Path | str | None = None) -> Settings:
             f"so the service is not reachable from other devices; got {settings.host!r}"
         )
     for name in ("port", "ram_reserve_mb", "max_history_messages", "max_message_chars",
-                 "request_timeout_s", "log_max_mb", "log_backups"):
+                 "request_timeout_s", "log_max_mb", "log_backups", "max_plan_steps",
+                 "max_task_chars", "planner_max_tokens", "coder_max_tokens", "reviewer_max_tokens"):
         if getattr(settings, name) <= 0:
             raise SettingsError(f"Setting '{name}' must be greater than 0")
+    if settings.max_revisions < 0:
+        raise SettingsError("Setting 'max_revisions' must be 0 or more")
+    if not 0 <= settings.agent_temperature <= 2:
+        raise SettingsError("Setting 'agent_temperature' must be between 0 and 2")
     if not settings.model.strip():
         raise SettingsError("Setting 'model' must not be empty")
     return settings

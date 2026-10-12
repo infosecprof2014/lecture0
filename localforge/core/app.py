@@ -17,6 +17,7 @@ from . import __version__
 from .config import Settings
 from .db import Database
 from .memory_guard import free_ram_bytes
+from .model_lock import ModelLock
 from .ollama_client import OllamaClient, OllamaUnavailable
 
 log = logging.getLogger("localforge.core")
@@ -62,14 +63,9 @@ def create_app(
     app = FastAPI(title="LocalForge AI core", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.db = db
-    # One chat at a time: this CPU cannot run two generations usefully. A plain value is
-    # enough because everything runs on one event loop. It holds the start time, so a
-    # stream that never ran its cleanup cannot block chat for longer than the timeout.
-    app.state.busy_since = None
-
-    def is_busy() -> bool:
-        since = app.state.busy_since
-        return since is not None and time.monotonic() - since < settings.request_timeout_s
+    # One model job at a time, shared by /chat and agent tasks.
+    lock = ModelLock(settings.request_timeout_s)
+    app.state.model_lock = lock
 
     @app.exception_handler(Exception)
     async def unexpected(request: Request, exc: Exception):
@@ -84,7 +80,7 @@ def create_app(
             "version": __version__,
             "configured_model": settings.model,
             "free_ram_mb": round(free_ram() / MB),
-            "busy": is_busy(),
+            "busy": lock.busy,
             "ollama": {"url": settings.ollama_url, "reachable": False},
         }
         try:
@@ -124,9 +120,8 @@ def create_app(
         if len(req.message) > settings.max_message_chars:
             return error(413, "message_too_long",
                          f"Message is {len(req.message)} characters; the limit is {settings.max_message_chars}")
-        if is_busy():
-            return error(429, "busy", "Another chat is still running. Try again when it finishes.")
-        app.state.busy_since = time.monotonic()
+        if not lock.try_acquire("chat"):
+            return error(429, "busy", "The model is busy with another chat or task. Try again when it finishes.")
         handed_off = False
         try:
             response = await _prepare_chat(req)
@@ -135,20 +130,16 @@ def create_app(
         finally:
             # The stream releases the flag itself when it ends.
             if not handed_off:
-                app.state.busy_since = None
+                lock.release("chat")
 
-    async def _prepare_chat(req: ChatRequest):
+    async def preflight(model: str, purpose: str) -> JSONResponse | None:
+        """Checks before using the model: Ollama up, model installed, one model loaded, enough RAM."""
         ollama: OllamaClient = app.state.ollama
-        model = full_name(req.model or settings.model)
-
-        if req.conversation_id is not None and not db.conversation_exists(req.conversation_id):
-            return error(404, "not_found", f"Conversation {req.conversation_id} does not exist")
-
         try:
             installed = {m.get("name"): m for m in await ollama.installed_models()}
             loaded = [m.get("name") for m in await ollama.loaded_models()]
         except OllamaUnavailable as exc:
-            log.warning("Chat refused: %s", exc)
+            log.warning("%s refused: %s", purpose, exc)
             return error(503, "ollama_unavailable", ollama.not_running_message())
 
         if model not in installed:
@@ -169,11 +160,22 @@ def create_app(
         needed = reserve if model in loaded else reserve + int(installed[model].get("size", 0))
         free = free_ram()
         if free < needed:
-            log.warning("Chat refused: %d MB free, %d MB needed", free // MB, needed // MB)
+            log.warning("%s refused: %d MB free, %d MB needed", purpose, free // MB, needed // MB)
             return error(503, "low_memory",
                          f"Not enough free memory to run {model} safely: {free // MB} MB free, "
                          f"{needed // MB} MB needed. Close some programs and try again.",
                          free_mb=free // MB, needed_mb=needed // MB)
+        return None
+
+    app.state.preflight = preflight
+
+    async def _prepare_chat(req: ChatRequest):
+        model = full_name(req.model or settings.model)
+        if req.conversation_id is not None and not db.conversation_exists(req.conversation_id):
+            return error(404, "not_found", f"Conversation {req.conversation_id} does not exist")
+        refused = await preflight(model, "Chat")
+        if refused is not None:
+            return refused
 
         conv_id = req.conversation_id or db.create_conversation(req.message.strip(), model)
         db.add_message(conv_id, "user", req.message)
@@ -215,6 +217,8 @@ def create_app(
             if status != "complete":
                 db.finish_message(reply_id, "".join(parts), status,
                                   None, round((time.perf_counter() - started) * 1000))
-            app.state.busy_since = None
+            lock.release("chat")
 
+    from .tasks_api import register_task_routes
+    register_task_routes(app, settings, db, lock)
     return app

@@ -10,5 +10,12 @@
   "db_path": "database/localforge.db",
   "log_path": "logs/core.log",
   "log_max_mb": 5,
-  "log_backups": 5
+  "log_backups": 5,
+  "max_plan_steps": 5,
+  "max_revisions": 2,
+  "max_task_chars": 2000,
+  "planner_max_tokens": 400,
+  "coder_max_tokens": 700,
+  "reviewer_max_tokens": 300,
+  "agent_temperature": 0.2
 }

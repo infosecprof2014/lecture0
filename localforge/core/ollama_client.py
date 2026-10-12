@@ -52,9 +52,17 @@ class OllamaClient:
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             raise OllamaUnavailable(f"Could not unload {model}: {exc}") from exc
 
-    async def chat_stream(self, model: str, messages: list[dict]) -> AsyncIterator[dict]:
-        """Yield Ollama's streamed chat chunks (dicts) until the final one with done=true."""
-        body = {"model": model, "messages": messages, "stream": True}
+    async def chat_stream(self, model: str, messages: list[dict], *,
+                          format: dict | None = None, options: dict | None = None) -> AsyncIterator[dict]:
+        """Yield Ollama's streamed chat chunks (dicts) until the final one with done=true.
+
+        `format` is a JSON schema the answer must follow (structured output).
+        """
+        body: dict = {"model": model, "messages": messages, "stream": True}
+        if format is not None:
+            body["format"] = format
+        if options:
+            body["options"] = options
         try:
             async with self._client.stream("POST", "/api/chat", json=body) as r:
                 if r.status_code != 200:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -27,6 +28,42 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    request      TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled')),
+    plan         TEXT,
+    error        TEXT,
+    created_at   TEXT NOT NULL,
+    finished_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS task_steps (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    number     INTEGER NOT NULL,
+    title      TEXT NOT NULL,
+    description TEXT NOT NULL,
+    code       TEXT,
+    verdict    TEXT,
+    revisions  INTEGER NOT NULL DEFAULT 0,
+    issues     TEXT
+);
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    step_id      INTEGER REFERENCES task_steps(id) ON DELETE CASCADE,
+    agent        TEXT NOT NULL,
+    input        TEXT NOT NULL,
+    output       TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('running', 'ok', 'invalid', 'error', 'cancelled')),
+    tokens       INTEGER,
+    duration_ms  INTEGER,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_steps_task ON task_steps(task_id, number);
+CREATE INDEX IF NOT EXISTS idx_runs_task ON agent_runs(task_id, id);
 """
 
 
@@ -114,3 +151,79 @@ class Database:
                 (conversation_id,),
             ).fetchall()
         return {**dict(conv), "messages": [dict(m) for m in msgs]}
+
+    # ------------------------------------------------------------ agent tasks (Phase 3)
+
+    def fail_interrupted_tasks(self) -> int:
+        """Tasks still 'running' at startup were cut off by a restart."""
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE tasks SET status = 'failed', error = 'Interrupted: the service stopped while it ran', "
+                "finished_at = ? WHERE status = 'running'", (_now(),))
+            con.execute("UPDATE agent_runs SET status = 'cancelled' WHERE status = 'running'")
+            return cur.rowcount
+
+    def create_task(self, request: str, model: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "INSERT INTO tasks (request, model, status, created_at) VALUES (?, ?, 'running', ?)",
+                (request, model, _now()))
+            return int(cur.lastrowid)
+
+    def set_task_plan(self, task_id: int, plan: list[dict]) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE tasks SET plan = ? WHERE id = ?", (json.dumps(plan), task_id))
+
+    def finish_task(self, task_id: int, status: str, error: str | None = None) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE tasks SET status = ?, error = ?, finished_at = ? WHERE id = ?",
+                        (status, error, _now(), task_id))
+
+    def add_step(self, task_id: int, number: int, title: str, description: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "INSERT INTO task_steps (task_id, number, title, description) VALUES (?, ?, ?, ?)",
+                (task_id, number, title, description))
+            return int(cur.lastrowid)
+
+    def update_step(self, step_id: int, *, code: str | None, verdict: str | None,
+                    revisions: int, issues: list[str]) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE task_steps SET code = ?, verdict = ?, revisions = ?, issues = ? WHERE id = ?",
+                        (code, verdict, revisions, json.dumps(issues), step_id))
+
+    def start_agent_run(self, task_id: int, step_id: int | None, agent: str, input_text: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "INSERT INTO agent_runs (task_id, step_id, agent, input, status, created_at) "
+                "VALUES (?, ?, ?, ?, 'running', ?)", (task_id, step_id, agent, input_text, _now()))
+            return int(cur.lastrowid)
+
+    def finish_agent_run(self, run_id: int, status: str, output: str | None,
+                         tokens: int | None, duration_ms: int | None) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE agent_runs SET status = ?, output = ?, tokens = ?, duration_ms = ? WHERE id = ?",
+                        (status, output, tokens, duration_ms, run_id))
+
+    def list_tasks(self) -> list[dict]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT t.id, t.request, t.model, t.status, t.error, t.created_at, t.finished_at, "
+                "(SELECT COUNT(*) FROM task_steps s WHERE s.task_id = t.id) AS step_count "
+                "FROM tasks t ORDER BY t.id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_task(self, task_id: int) -> dict | None:
+        with self._connect() as con:
+            task = con.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if task is None:
+                return None
+            steps = con.execute("SELECT * FROM task_steps WHERE task_id = ? ORDER BY number", (task_id,)).fetchall()
+            runs = con.execute(
+                "SELECT id, step_id, agent, status, tokens, duration_ms, input, output, created_at "
+                "FROM agent_runs WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+        result = dict(task)
+        result["plan"] = json.loads(result["plan"]) if result["plan"] else None
+        result["steps"] = [{**dict(s), "issues": json.loads(s["issues"]) if s["issues"] else []} for s in steps]
+        result["agent_runs"] = [dict(r) for r in runs]
+        return result
