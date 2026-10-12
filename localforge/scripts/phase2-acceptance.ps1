@@ -97,7 +97,8 @@ $config = Get-Content -LiteralPath (Join-Path $Root 'config\settings.json') -Raw
 $core = Start-Core
 $health = Get-Health
 $errText = if (Test-Path -LiteralPath $ErrLog) { Get-Content -LiteralPath $ErrLog -Raw } else { '' }
-$badLines = @(($errText -split "`r?`n") | Where-Object { $_ -match 'Traceback|\bERROR\b|\bCRITICAL\b' })
+# Match the level column case-sensitively: the logger "uvicorn.error" logs normal INFO lines.
+$badLines = @(($errText -split "`r?`n") | Where-Object { $_ -cmatch '^Traceback|^\S+ \S+ (ERROR|CRITICAL) ' })
 Add-Result '1' 'start-core.ps1 starts the service with no errors' ([bool]$health -and $badLines.Count -eq 0) `
     $(if (-not $health) { "service did not answer within 60 s; see $ErrLog" } elseif ($badLines.Count) { 'error lines: ' + ($badLines[0..1] -join ' / ') } else { 'running, no error lines in startup output' })
 
@@ -120,6 +121,15 @@ $detail3 = if ($ok3) {
     "HTTP $($chat.Status): " + (($chat.Events | Select-Object -First 1 | ConvertTo-Json -Compress))
 }
 Add-Result '3' 'POST /chat "Say OK" streams back a response' ([bool]$ok3) $detail3
+
+# Extra measurement (not an acceptance test): model now loaded, longer answer.
+$warm = Invoke-ChatStream 'Count from 1 to 10, separated by commas.'
+$warmDone = $warm.Events | Where-Object { $_.type -eq 'done' } | Select-Object -First 1
+$warmText = (($warm.Events | Where-Object { $_.type -eq 'token' } | ForEach-Object { $_.content }) -join '').Trim()
+$warmLine = if ($warmDone -and $warm.TokenTimes.Count) {
+    "reply '$warmText'; $($warm.TokenTimes.Count) pieces, first after $($warm.TokenTimes[0]) ms, last after $($warm.TokenTimes[-1]) ms; total $($warm.TotalMs) ms; $($warmDone.tokens_per_s) tokens/s"
+} else { "failed: HTTP $($warm.Status)" }
+Write-Host "      warm chat: $warmLine"
 
 # ---------------------------------------------------------------- 4. restart keeps history
 Stop-Core $core
@@ -171,14 +181,25 @@ $ok5 = ($down.Status -eq 503) -and ($err.error -eq 'ollama_unavailable') -and $s
 Add-Result '5' 'With Ollama stopped: clear error, service keeps running' ([bool]$ok5) `
     ("HTTP $($down.Status): '$($err.message)'; /health afterwards: " + $(if ($stillUp) { $stillUp.status } else { 'NO RESPONSE' }))
 
-if ($hadApp -and (Test-Path -LiteralPath $appExe)) { Start-Process -FilePath $appExe }
-else {
-    $ollamaExe = (Get-Command ollama -ErrorAction SilentlyContinue).Source
-    if ($ollamaExe) { Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden }
+$restartHow = 'not restarted'
+if ($hadApp -and (Test-Path -LiteralPath $appExe)) {
+    Start-Process -FilePath $appExe
+    for ($i = 0; $i -lt 30 -and -not (Test-Ollama); $i++) { Start-Sleep -Seconds 1 }
+    if (Test-Ollama) { $restartHow = 'Ollama app' }
 }
-for ($i = 0; $i -lt 60 -and -not (Test-Ollama); $i++) { Start-Sleep -Seconds 1 }
+if (-not (Test-Ollama)) {
+    # The tray app may not start the server (for example from an admin window); start it directly.
+    $ollamaExe = (Get-Command ollama -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $ollamaExe) { $ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe' }
+    if (Test-Path -LiteralPath $ollamaExe) {
+        Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
+        for ($i = 0; $i -lt 60 -and -not (Test-Ollama); $i++) { Start-Sleep -Seconds 1 }
+        if (Test-Ollama) { $restartHow = 'ollama serve (hidden window)' }
+    }
+}
 $ollamaBack = Test-Ollama
-Write-Host ("Ollama restarted: " + $ollamaBack)
+Write-Host ("Ollama restarted: $ollamaBack ($restartHow)")
+if (-not $ollamaBack) { Write-Host 'Please start Ollama from the Start menu.' -ForegroundColor Yellow }
 
 Stop-Core $core
 
@@ -212,7 +233,8 @@ if ($ok3) {
     L "- Time to first streamed piece: $firstMs ms"
     L "- Total time: $($chat.TotalMs) ms"
     L "- Generation speed reported by Ollama: $($done.tokens_per_s) tokens/s ($($done.tokens) tokens)"
-    L "- The model may have needed loading first; a later chat with the model already loaded starts faster."
+    L "- This first chat includes loading the model from disk into memory."
+    L "- Warm chat (model already loaded, 'Count from 1 to 10'): $warmLine"
 } else { L '- Not measured: test 3 failed.' }
 L ''
 L '## Known limits'
@@ -221,7 +243,7 @@ L '- One chat at a time by design; a long answer (10-30 s on this CPU) makes oth
 L '- The free-RAM check is a safeguard, not a guarantee: other programs can still use memory after a chat starts.'
 L '- Conversation history sent to the model is capped by `max_history_messages` (default 20); very long chats lose early context.'
 L '- No authentication: anyone using this Windows account can call the API. It is not reachable from the network.'
-L ('- Test 5 stops and restarts Ollama. Ollama restarted afterwards: ' + $ollamaBack)
+L ('- Test 5 stops and restarts Ollama. Ollama restarted afterwards: ' + $ollamaBack + ' (' + $restartHow + ')')
 L ''
 L '## Repeat each test'
 L ''

@@ -135,8 +135,11 @@ def test_one_chat_at_a_time(client):
     assert status == 429 and events[0]["error"] == "busy"
 
 
-def test_stale_busy_flag_expires(client):
-    client.app.state.busy_since = 0.0  # far older than request_timeout_s
+def test_stale_busy_flag_expires(client, settings):
+    import time
+    # Started longer ago than request_timeout_s. (Not 0.0: the monotonic clock counts
+    # from boot, so 0.0 is "recent" on a machine that started a few minutes ago.)
+    client.app.state.busy_since = time.monotonic() - settings.request_timeout_s - 1
     status, _ = read_stream(client, {"message": "Say OK"})
     assert status == 200
 
