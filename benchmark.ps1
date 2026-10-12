@@ -40,8 +40,8 @@ if (-not $ollama) {
 function GB($b) { '{0:N2} GB' -f ($b / 1GB) }
 
 $tests = New-Object System.Collections.Generic.List[object]
-function Add-Test([string]$Name, [bool]$Pass, [string]$Detail) {
-    $tests.Add([pscustomobject]@{ Name = $Name; Pass = $Pass; Detail = $Detail })
+function Add-Test([string]$Id, [string]$Name, [bool]$Pass, [string]$Detail) {
+    $tests.Add([pscustomobject]@{ Id = $Id; Name = $Name; Pass = $Pass; Detail = $Detail })
     $mark = if ($Pass) { 'PASS' } else { 'FAIL' }
     Write-Host ('[{0}] {1} - {2}' -f $mark, $Name, $Detail)
 }
@@ -52,17 +52,24 @@ $inspectPath = Join-Path $PSScriptRoot 'inspect.ps1'
 if (-not (Test-Path -LiteralPath $inspectPath)) { $inspectPath = Join-Path $Root 'scripts\inspect.ps1' }
 $inspectText = ''
 if (Test-Path -LiteralPath $inspectPath) {
-    $before = @(Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + '|' + $_.LastWriteTimeUtc.Ticks })
+    # Snapshot names and sizes, not timestamps: NTFS updates timestamps lazily, so a
+    # folder written just before (for example a new venv) can look "changed" later.
+    $snap = { @(Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue |
+                ForEach-Object { if ($_.PSIsContainer) { $_.FullName + '\' } else { $_.FullName + '|' + $_.Length } }) }
+    $before = & $snap
     $raw = & powershell -NoProfile -ExecutionPolicy Bypass -File $inspectPath 2>&1
     $code = $LASTEXITCODE
-    $after = @(Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + '|' + $_.LastWriteTimeUtc.Ticks })
+    $after = & $snap
     $errs = @($raw | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
     $inspectText = ($raw | ForEach-Object { $_.ToString() }) -join "`r`n"
-    $changed = @(Compare-Object $before $after).Count
-    Add-Test 'inspect.ps1 runs without errors and changes nothing' (($code -eq 0) -and ($errs.Count -eq 0) -and ($changed -eq 0)) `
-        ("exit $code, $($errs.Count) error(s), $changed file change(s) under $Root")
+    $diff = @(Compare-Object $before $after)
+    $changed = $diff.Count
+    $diffNote = ''
+    if ($changed) { $diffNote = '; e.g. ' + (($diff | Select-Object -First 3 | ForEach-Object { $_.SideIndicator + ' ' + $_.InputObject }) -join ', ') }
+    Add-Test '1' 'inspect.ps1 runs without errors and changes nothing' (($code -eq 0) -and ($errs.Count -eq 0) -and ($changed -eq 0)) `
+        ("exit $code, $($errs.Count) error(s), $changed file change(s) under $Root$diffNote")
 } else {
-    Add-Test 'inspect.ps1 runs without errors and changes nothing' $false 'inspect.ps1 not found'
+    Add-Test '1' 'inspect.ps1 runs without errors and changes nothing' $false 'inspect.ps1 not found'
 }
 
 # ---------------------------------------------------------------- Test 2: versions
@@ -75,10 +82,10 @@ foreach ($t in @(@('python', '--version'), @('git', '--version'), @('ollama', '-
     if ($exe) {
         $out = (& $exe.Source $t[1] 2>&1 | ForEach-Object { $_.ToString() } | Where-Object { $_ -match '\d+\.\d+' } | Select-Object -Last 1)
         $versions[$t[0]] = $out
-        Add-Test ("$($t[0]) --version") ([bool]$out) $(if ($out) { $out } else { 'no version returned' })
+        Add-Test '2' ("$($t[0]) --version") ([bool]$out) $(if ($out) { $out } else { 'no version returned' })
     } else {
         $versions[$t[0]] = 'missing'
-        Add-Test ("$($t[0]) --version") $false 'not found on PATH'
+        Add-Test '2' ("$($t[0]) --version") $false 'not found on PATH'
     }
 }
 
@@ -87,9 +94,9 @@ Write-Host "=== Test 3: ollama run $Model"
 $sayOk = ''
 if ($ollama) {
     $sayOk = ((& $ollama run $Model 'Say OK' 2>$null) -join ' ').Trim()
-    Add-Test ("ollama run $Model `"Say OK`"") ([bool]$sayOk) $(if ($sayOk) { "response: $sayOk" } else { 'no response' })
+    Add-Test '3' ("ollama run $Model `"Say OK`"") ([bool]$sayOk) $(if ($sayOk) { "response: $sayOk" } else { 'no response' })
 } else {
-    Add-Test ("ollama run $Model `"Say OK`"") $false 'ollama not installed'
+    Add-Test '3' ("ollama run $Model `"Say OK`"") $false 'ollama not installed'
 }
 
 # ---------------------------------------------------------------- Test 4: venv
@@ -99,9 +106,9 @@ if (Test-Path -LiteralPath $activate) {
     $probe = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$activate'; if (`$env:VIRTUAL_ENV) { python -c 'import sys; print(sys.prefix)' } else { 'not activated' }" 2>&1
     $probe = ($probe | ForEach-Object { $_.ToString() }) -join ' '
     $ok = (Test-Path -LiteralPath $Root) -and ($probe -like '*LocalForgeAI*.venv*')
-    Add-Test "$Root exists and venv activates" $ok $probe
+    Add-Test '4' "$Root exists and venv activates" $ok $probe
 } else {
-    Add-Test "$Root exists and venv activates" $false "$activate not found"
+    Add-Test '4' "$Root exists and venv activates" $false "$activate not found"
 }
 
 # ---------------------------------------------------------------- Benchmark
@@ -112,9 +119,30 @@ $prompts = [ordered]@{
     'JSON plan' = 'Return only JSON: a 4-step plan to set up a local AI project. Use the shape {"steps":[{"id":1,"title":"...","done":false}]}.'
 }
 
-function Get-OllamaRam {
+# PIDs of the process listening on 11434 and all its children (the model runner),
+# plus anything named ollama*. Matching by name alone missed the runner.
+function Get-OllamaPids {
+    $pids = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'ollama*' } | ForEach-Object { $_.Id })
+    $listen = Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($listen) {
+        $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId -ErrorAction SilentlyContinue)
+        $frontier = @($listen.OwningProcess)
+        $pids += $frontier
+        while ($frontier.Count) {
+            $kids = @($all | Where-Object { $frontier -contains $_.ParentProcessId -and $pids -notcontains $_.ProcessId } | ForEach-Object { $_.ProcessId })
+            $pids += $kids
+            $frontier = $kids
+        }
+    }
+    return @($pids | Select-Object -Unique)
+}
+
+function Get-OllamaRam([int[]]$Pids, [switch]$Peak) {
     $s = 0
-    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'ollama*' })) { $s += $p.WorkingSet64 }
+    if (-not $Pids) { return $s }
+    foreach ($p in @(Get-Process -Id $Pids -ErrorAction SilentlyContinue)) {
+        if ($Peak) { $s += $p.PeakWorkingSet64 } else { $s += $p.WorkingSet64 }
+    }
     return $s
 }
 
@@ -129,12 +157,16 @@ foreach ($name in $prompts.Keys) {
         param($j)
         Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/generate' -Method Post -Body $j -ContentType 'application/json' -TimeoutSec 600
     } -ArgumentList $json
+    $oPids = Get-OllamaPids
     $peakOllama = 0; $peakSys = 0
     while ($job.State -eq 'Running' -or $job.State -eq 'NotStarted') {
-        $o = Get-OllamaRam; if ($o -gt $peakOllama) { $peakOllama = $o }
+        $o = Get-OllamaRam $oPids; if ($o -gt $peakOllama) { $peakOllama = $o }
         $u = $sysTotal - [double]$ci.AvailablePhysicalMemory; if ($u -gt $peakSys) { $peakSys = $u }
         Start-Sleep -Milliseconds 250
     }
+    $oPids = @($oPids + (Get-OllamaPids)) | Select-Object -Unique
+    $o = Get-OllamaRam $oPids; if ($o -gt $peakOllama) { $peakOllama = $o }
+    $winPeak = Get-OllamaRam $oPids -Peak
     $r = Receive-Job $job -ErrorAction SilentlyContinue -ErrorVariable jobErr
     Remove-Job $job -Force
     if (-not $r -or -not $r.eval_count) {
@@ -153,7 +185,7 @@ foreach ($name in $prompts.Keys) {
         OutTokens = $r.eval_count; GenTps = [Math]::Round($gen, 1)
         PromptTokens = $r.prompt_eval_count; PromptTps = [Math]::Round($pp, 1)
         LoadSec = [Math]::Round($r.load_duration / 1e9, 2); TotalSec = [Math]::Round($r.total_duration / 1e9, 2)
-        PeakOllama = $peakOllama; PeakSys = $peakSys; BaseSys = $baseUsed
+        PeakOllama = $peakOllama; WinPeak = $winPeak; PeakSys = $peakSys; BaseSys = $baseUsed
         Note = $note; Output = $r.response
     }
     $results += $row
@@ -204,8 +236,7 @@ L '## Acceptance tests'
 L ''
 L '| # | Test | Result | Detail |'
 L '|---|------|--------|--------|'
-$n = 1
-foreach ($t in $tests) { L ('| {0} | {1} | {2} | {3} |' -f $n, $t.Name, $(if ($t.Pass) { 'PASS' } else { 'FAIL' }), ($t.Detail -replace '\|', '/')); $n++ }
+foreach ($t in $tests) { L ('| {0} | {1} | {2} | {3} |' -f $t.Id, $t.Name, $(if ($t.Pass) { 'PASS' } else { 'FAIL' }), ($t.Detail -replace '\|', '/')) }
 L ('| 5 | Report saved to ' + $Report + ' | PASS | this file |')
 L ''
 L '## Compatibility'
@@ -220,17 +251,17 @@ L ''
 L "## Benchmark: $Model"
 L ''
 if ($proc) { L $proc; L '' }
-L '| Prompt | Output tokens | Generation tok/s | Prompt tok/s | Load s | Total s | Peak Ollama RAM | Peak system RAM used | Note |'
-L '|--------|---------------|------------------|--------------|--------|---------|-----------------|----------------------|------|'
+L '| Prompt | Output tokens | Generation tok/s | Prompt tok/s | Load s | Total s | Peak Ollama RAM (sampled) | Ollama peak since start (Windows) | Peak system RAM used (before prompt) | Note |'
+L '|--------|---------------|------------------|--------------|--------|---------|---------------------------|-----------------------------------|--------------------------------------|------|'
 foreach ($r in $results) {
-    if ($r.Ok) { L ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $r.Prompt, $r.OutTokens, $r.GenTps, $r.PromptTps, $r.LoadSec, $r.TotalSec, (GB $r.PeakOllama), (GB $r.PeakSys), $r.Note) }
-    else { L ('| {0} | - | - | - | - | - | - | - | FAILED: {1} |' -f $r.Prompt, $r.Note) }
+    if ($r.Ok) { L ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} ({9}) | {10} |' -f $r.Prompt, $r.OutTokens, $r.GenTps, $r.PromptTps, $r.LoadSec, $r.TotalSec, (GB $r.PeakOllama), (GB $r.WinPeak), (GB $r.PeakSys), (GB $r.BaseSys), $r.Note) }
+    else { L ('| {0} | - | - | - | - | - | - | - | - | FAILED: {1} |' -f $r.Prompt, $r.Note) }
 }
 L ''
-L 'Token rates come from Ollama''s own eval counters. RAM is sampled every 250 ms (working set of all ollama* processes, and total system RAM in use), so short spikes between samples can be missed.'
+L 'Token rates come from Ollama''s own eval counters. Ollama RAM is the working set of the Ollama server and its child processes (the model runner), sampled every 250 ms; the Windows peak column is the processes'' own peak working set since they started, which no sampling can miss. A load time near 0 s means the model was already in memory from test 3.'
 L ''
 foreach ($r in $results | Where-Object { $_.Ok }) {
-    L "<details><summary>Output: $($r.Prompt)</summary>"; L ''; L '```'; L $r.Output; L '```'; L ''; L '</details>'; L ''
+    L "<details><summary>Output: $($r.Prompt)</summary>"; L ''; L '~~~~'; L $r.Output; L '~~~~'; L ''; L '</details>'; L ''
 }
 L '## Known limits'
 L ''

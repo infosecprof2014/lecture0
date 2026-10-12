@@ -226,7 +226,7 @@ try {
 
 # Shortlist sized by total RAM (smaller first). The first entry is the one pulled.
 if ($ramGB -lt 8 -or -not $avx2) { $shortlist = 'llama3.2:1b', 'qwen2.5:1.5b', 'gemma3:1b' }
-elseif ($ramGB -lt 16)            { $shortlist = 'llama3.2:3b', 'qwen2.5-coder:3b', 'phi4-mini' }
+elseif ($ramGB -lt 16)            { $shortlist = 'llama3.2:3b', 'qwen3:4b', 'llama3.2:1b' }
 else                               { $shortlist = 'llama3.2:3b', 'qwen2.5-coder:7b', 'llama3.1:8b' }
 if (-not $Model) { $Model = $shortlist[0] }
 Say ('  Shortlist for this machine: ' + ($shortlist -join ', '))
