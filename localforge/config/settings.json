@@ -23,5 +23,8 @@
   "fixer_max_tokens": 1000,
   "max_fix_rounds": 2,
   "test_timeout_s": 10,
-  "sandbox_memory_mb": 512
+  "sandbox_memory_mb": 512,
+  "backups_path": "backups",
+  "keep_backups": 10,
+  "auto_backup_hours": 24
 }

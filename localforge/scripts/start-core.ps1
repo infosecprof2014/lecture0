@@ -10,7 +10,9 @@
 
 [CmdletBinding()]
 param(
-    [string]$Root = ''
+    [string]$Root = '',
+    # Make a backup first if the newest one is older than auto_backup_hours (used by auto-start).
+    [switch]$Backup
 )
 
 # Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults, so
@@ -32,6 +34,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $Root 'core\app.py'))) {
 . $activate
 $env:LOCALFORGE_ROOT = $Root
 Set-Location -LiteralPath $Root
+if ($Backup) {
+    python -m core.backup auto
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Automatic backup failed; starting anyway. See the message above.' }
+}
 Write-Host "Starting LocalForge core from $Root (Ctrl+C to stop)..."
+Write-Host "Web interface: http://127.0.0.1:8000"
 python -m core
 exit $LASTEXITCODE

@@ -204,6 +204,14 @@ def _posix_limits(memory_mb: int):
     return preexec
 
 
+def sandbox_python() -> str:
+    """The real interpreter. On Windows a venv's python.exe is a small launcher that starts the base
+    python.exe as a child process, which the Job Object (no child processes) would block, or which
+    would run outside the memory cap. Generated code needs only the standard library anyway."""
+    base = getattr(sys, "_base_executable", None)
+    return base if base and Path(base).is_file() else sys.executable
+
+
 def run_tests(project_dir: Path, *, python: str | None = None, timeout_s: int = 10,
               memory_mb: int = 512) -> TestResult:
     """Run test_solution.py against solution.py in `project_dir` (both already written)."""
@@ -217,7 +225,7 @@ def run_tests(project_dir: Path, *, python: str | None = None, timeout_s: int = 
     for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):  # Python needs these on Windows
         if key in os.environ:
             env[key] = os.environ[key]
-    cmd = [python or sys.executable, "-I", "-B", "-X", "utf8", "_harness.py"]
+    cmd = [python or sandbox_python(), "-I", "-B", "-X", "utf8", "_harness.py"]
     memory_cap = "not applied"
     started = time.perf_counter()
     kwargs: dict = {}

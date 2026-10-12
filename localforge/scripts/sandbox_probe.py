@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.config import load_settings  # noqa: E402
-from core.sandbox import HARNESS, check_code, run_tests  # noqa: E402
+from core.sandbox import HARNESS, check_code, run_tests, sandbox_python  # noqa: E402
 
 REFERENCE_TESTS = '''from solution import *
 
@@ -55,7 +55,7 @@ def probe() -> dict:
             "def test_write():\n    with open('evil.txt', 'w') as fh:\n        fh.write('x')\n"
             "def test_net():\n    socket.create_connection(('127.0.0.1', 9), timeout=1)\n", encoding="utf-8")
         import subprocess
-        res = subprocess.run([sys.executable, "-I", "-B", "_harness.py"], cwd=d, capture_output=True,
+        res = subprocess.run([sandbox_python(), "-I", "-B", "_harness.py"], cwd=d, capture_output=True,
                              text=True, timeout=60)
         tests = json.loads(res.stdout.rsplit("__LOCALFORGE_RESULT__", 1)[1])["tests"]
         details = {t["name"]: t["detail"] for t in tests}
@@ -65,15 +65,16 @@ def probe() -> dict:
             "detail": f"write: {details.get('test_write')} | network: {details.get('test_net')}"}
 
         d = make(root, "loop", "def f():\n    while True:\n        pass\n", "from solution import *\ndef test_f():\n    f()\n")
-        r = run_tests(d, python=sys.executable, timeout_s=3, memory_mb=s.sandbox_memory_mb)
+        r = run_tests(d, timeout_s=3, memory_mb=s.sandbox_memory_mb)
         out["timeout"] = {"ok": r.status == "timeout", "detail": f"{r.status} after {r.duration_ms} ms"}
 
         # Grows to 1.5 GB in 10 MB pieces: stopped by a working cap, harmless if the cap is missing.
         d = make(root, "memory", "def f():\n    x = []\n    for _ in range(150):\n        x.append(bytearray(10**7))\n"
                  "    return len(x)\n", "from solution import *\ndef test_f():\n    assert f() == 150\n")
-        r = run_tests(d, python=sys.executable, timeout_s=30, memory_mb=s.sandbox_memory_mb)
+        r = run_tests(d, timeout_s=30, memory_mb=s.sandbox_memory_mb)
         out["memory_cap"] = {"ok": "MemoryError" in r.summary() and "not applied" not in r.memory_cap,
                              "detail": f"{r.status}; cap: {r.memory_cap}; " + r.summary().splitlines()[-1][:200]}
+    out["interpreter"] = {"ok": True, "detail": sandbox_python()}
     return out
 
 
@@ -83,7 +84,7 @@ def reference(project: Path) -> dict:
         d.mkdir()
         shutil.copy(project / "solution.py", d / "solution.py")
         (d / "test_solution.py").write_text(REFERENCE_TESTS, encoding="utf-8")
-        r = run_tests(d, python=sys.executable, timeout_s=10)
+        r = run_tests(d, timeout_s=10)
         return {"status": r.status, "passed": r.passed, "failed": r.failed, "summary": r.summary()}
 
 

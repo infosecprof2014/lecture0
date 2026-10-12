@@ -56,7 +56,7 @@ def test_run_tests_pass_and_fail(tmp_path):
     d = project(tmp_path, "def add(a, b):\n    return a + b\n",
                 "from solution import *\ndef test_ok():\n    assert add(1, 2) == 3\n"
                 "def test_bad():\n    assert add(1, 1) == 3\n")
-    r = run_tests(d, python=sys.executable, timeout_s=10)
+    r = run_tests(d, timeout_s=10)
     assert r.status == "failed" and r.passed == 1 and r.failed == 1
     assert "test_bad: failed - assert failed: assert add(1, 1) == 3" in r.summary()
 
@@ -64,13 +64,13 @@ def test_run_tests_pass_and_fail(tmp_path):
 def test_run_tests_timeout(tmp_path):
     d = project(tmp_path, "def f():\n    while True:\n        pass\n",
                 "from solution import *\ndef test_f():\n    f()\n")
-    r = run_tests(d, python=sys.executable, timeout_s=2)
+    r = run_tests(d, timeout_s=2)
     assert r.status == "timeout" and r.duration_ms < 6000
 
 
 def test_run_tests_blocked_before_running(tmp_path):
     d = project(tmp_path, "import os\ndef f():\n    os.remove('x')\n", "from solution import *\ndef test_f():\n    f()\n")
-    r = run_tests(d, python=sys.executable)
+    r = run_tests(d)
     assert r.status == "blocked" and not (d / "_harness.py").exists()
 
 
@@ -84,7 +84,8 @@ def test_runtime_hook_blocks_writes_and_network(tmp_path):
         "def test_write():\n    with open('evil.txt', 'w') as fh:\n        fh.write('x')\n"
         "def test_net():\n    socket.create_connection(('127.0.0.1', 9), timeout=1)\n", encoding="utf-8")
     import subprocess
-    out = subprocess.run([sys.executable, "-I", "-B", "_harness.py"], cwd=d, capture_output=True, text=True,
+    from core.sandbox import sandbox_python
+    out = subprocess.run([sandbox_python(), "-I", "-B", "_harness.py"], cwd=d, capture_output=True, text=True,
                          timeout=30).stdout
     result = json.loads(out.rsplit("__LOCALFORGE_RESULT__", 1)[1])
     details = {t["name"]: t["detail"] for t in result["tests"]}
@@ -97,7 +98,7 @@ def test_runtime_hook_blocks_writes_and_network(tmp_path):
 def test_memory_cap(tmp_path):
     d = project(tmp_path, "def f():\n    x = []\n    for _ in range(150):\n        x.append(bytearray(10**7))\n"
                 "    return len(x)\n", "from solution import *\ndef test_f():\n    assert f() == 150\n")
-    r = run_tests(d, python=sys.executable, timeout_s=20, memory_mb=256)
+    r = run_tests(d, timeout_s=20, memory_mb=256)
     assert r.status == "failed" and "MemoryError" in r.summary()
 
 

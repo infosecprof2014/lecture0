@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from typing import Callable
 
 from core.config import Settings
@@ -128,7 +127,7 @@ class Orchestrator:
         (project / "test_solution.py").write_text(tests + "\n", encoding="utf-8")
 
         for round_no in range(self.settings.max_fix_rounds + 1):
-            result = await asyncio.to_thread(run_tests, project, python=sys.executable,
+            result = await asyncio.to_thread(run_tests, project,
                                              timeout_s=self.settings.test_timeout_s,
                                              memory_mb=self.settings.sandbox_memory_mb)
             self.db.add_test_run(task_id, round_no, result.status, result.passed, result.failed,

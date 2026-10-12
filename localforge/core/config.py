@@ -46,6 +46,10 @@ class Settings:
     max_fix_rounds: int = 2
     test_timeout_s: int = 10
     sandbox_memory_mb: int = 512
+    # Maintenance (Phase 6)
+    backups_path: str = "backups"
+    keep_backups: int = 10
+    auto_backup_hours: int = 24
 
     def resolve(self, relative: str) -> Path:
         p = Path(relative)
@@ -62,6 +66,10 @@ class Settings:
     @property
     def projects_dir(self) -> Path:
         return self.resolve(self.projects_path)
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.resolve(self.backups_path)
 
 
 def default_settings_path() -> Path:
@@ -103,7 +111,8 @@ def load_settings(path: Path | str | None = None) -> Settings:
     for name in ("port", "ram_reserve_mb", "max_history_messages", "max_message_chars",
                  "request_timeout_s", "log_max_mb", "log_backups", "max_plan_steps",
                  "max_task_chars", "planner_max_tokens", "coder_max_tokens", "reviewer_max_tokens",
-                 "tester_max_tokens", "fixer_max_tokens", "test_timeout_s", "sandbox_memory_mb"):
+                 "tester_max_tokens", "fixer_max_tokens", "test_timeout_s", "sandbox_memory_mb",
+                 "keep_backups", "auto_backup_hours"):
         if getattr(settings, name) <= 0:
             raise SettingsError(f"Setting '{name}' must be greater than 0")
     if settings.max_fix_rounds < 0:
@@ -115,3 +124,17 @@ def load_settings(path: Path | str | None = None) -> Settings:
     if not settings.model.strip():
         raise SettingsError("Setting 'model' must not be empty")
     return settings
+
+
+def add_missing_settings(path: Path | str | None = None) -> list[str]:
+    """Add settings introduced by newer versions to settings.json, keeping every existing value."""
+    path = Path(path) if path else default_settings_path()
+    raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    added = []
+    for f in fields(Settings):
+        if f.name not in raw:
+            raw[f.name] = getattr(Settings(), f.name)
+            added.append(f.name)
+    if added:
+        path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    return added
