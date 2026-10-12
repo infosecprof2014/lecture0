@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS test_runs (
     duration_ms  INTEGER,
     created_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL CHECK (kind IN ('file', 'image', 'video')),
+    prompt       TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled')),
+    path         TEXT,
+    error        TEXT,
+    meta         TEXT,
+    duration_ms  INTEGER,
+    created_at   TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_steps_task ON task_steps(task_id, number);
 CREATE INDEX IF NOT EXISTS idx_test_runs_task ON test_runs(task_id, id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON agent_runs(task_id, id);
@@ -269,3 +280,41 @@ class Database:
         with self._connect() as con:
             rows = con.execute("SELECT * FROM test_runs WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------ created files, images, videos (Phase 7)
+
+    def fail_interrupted_artifacts(self) -> int:
+        with self._connect() as con:
+            return con.execute("UPDATE artifacts SET status = 'failed', error = 'Interrupted: the service stopped' "
+                               "WHERE status = 'running'").rowcount
+
+    def create_artifact(self, kind: str, prompt: str) -> int:
+        with self._connect() as con:
+            cur = con.execute("INSERT INTO artifacts (kind, prompt, status, created_at) VALUES (?, ?, 'running', ?)",
+                              (kind, prompt, _now()))
+            return int(cur.lastrowid)
+
+    def finish_artifact(self, artifact_id: int, status: str, *, path: str | None = None, error: str | None = None,
+                        meta: dict | None = None, duration_ms: int | None = None) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE artifacts SET status = ?, path = ?, error = ?, meta = ?, duration_ms = ? WHERE id = ?",
+                        (status, path, error, json.dumps(meta or {}), duration_ms, artifact_id))
+
+    def get_artifact(self, artifact_id: int) -> dict | None:
+        with self._connect() as con:
+            row = con.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["meta"] = json.loads(d["meta"]) if d["meta"] else {}
+        return d
+
+    def list_artifacts(self, limit: int = 100) -> list[dict]:
+        with self._connect() as con:
+            rows = con.execute("SELECT * FROM artifacts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = json.loads(d["meta"]) if d["meta"] else {}
+            out.append(d)
+        return out

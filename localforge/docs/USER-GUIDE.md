@@ -24,6 +24,33 @@ ends an answer early; what arrived is kept. Earlier conversations are listed on 
   After that, answers start in about 1 s and arrive at roughly 7-8 tokens (5-6 words) per second.
 - Only one chat or task runs at a time. If you see "busy", wait for the current one to finish.
 
+## Talk to it (voice)
+
+Install once: `scripts\install-phase7.ps1` (asks before each download).
+
+- In **Chat**, click **🎤 Speak**, talk, then click **■ Stop recording**. Your words are turned into
+  text on this PC (Whisper; nothing is sent anywhere) and sent as your message.
+- Tick **Speak answers** to hear replies read aloud with the Windows voices.
+- The browser asks once for microphone permission for `127.0.0.1`.
+
+## Create files, images and videos
+
+Open **Create**, pick 📄 File, 🖼️ Image or 🎬 Video, describe what you want and press **Create**.
+
+| Kind | What you get | Time on this PC |
+|---|---|---|
+| File | One `.md .txt .csv .json .html .py .xml .yaml .ini .sql` file in `projects\files` | under a minute |
+| Image | A 512x512 picture (SD-Turbo) in `projects\images` | about 30 s - 2 min |
+| Video | A narrated slideshow MP4 (one picture per scene, slow zoom, fades, captions) in `projects\videos` | several minutes |
+
+- Files are never overwritten (`report.md`, `report-2.md`, ...) and created web pages are only downloaded,
+  never opened inside LocalForge.
+- Making pictures needs about 2.5 GB of free memory: the chat model is unloaded first, so the next
+  chat takes about 30 s to start.
+- Realistic AI-generated motion video is **not** possible on this laptop (it needs a graphics card with
+  12-24 GB of memory). Videos here are slideshows of generated pictures.
+- **Cancel** stops a creation straight away.
+
 ## Tasks (agents that write code)
 
 Open **Tasks**, describe the Python code you want, and press **Run task**. You will see:
@@ -54,6 +81,7 @@ All commands are run as `powershell -NoProfile -ExecutionPolicy Bypass -File <sc
 | `register-autostart.ps1` | Start LocalForge automatically (hidden) when you sign in |
 | `unregister-autostart.ps1` | Turn auto-start off |
 | `update.ps1` | Get the latest version (`-CheckOnly` to just check); your data and settings are kept |
+| `install-phase7.ps1` | Install voice input, image and video tools (asks before each download) |
 
 ## Backups
 

@@ -26,5 +26,18 @@
   "sandbox_memory_mb": 512,
   "backups_path": "backups",
   "keep_backups": 10,
-  "auto_backup_hours": 24
+  "auto_backup_hours": 24,
+  "whisper_model_dir": "models/whisper-base",
+  "voice_max_mb": 10,
+  "files_max_tokens": 1500,
+  "files_max_kb": 200,
+  "sd_binary": "",
+  "sd_model": "",
+  "image_size": 512,
+  "image_steps": 1,
+  "image_ram_mb": 2500,
+  "image_timeout_s": 900,
+  "ffmpeg_binary": "",
+  "video_max_scenes": 4,
+  "storyboard_max_tokens": 700
 }

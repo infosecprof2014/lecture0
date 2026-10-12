@@ -7,6 +7,7 @@ const $ = (sel) => document.querySelector(sel);
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
+    if (v == null) continue; // null/undefined means "no attribute"
     if (k === "class") node.className = v;
     else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
     else node.setAttribute(k, v);
@@ -75,9 +76,9 @@ function showView(name) {
   for (const tab of document.querySelectorAll(".tab")) {
     tab.setAttribute("aria-pressed", String(tab.dataset.view === name));
   }
-  $("#view-chat").hidden = name !== "chat";
-  $("#view-tasks").hidden = name !== "tasks";
+  for (const view of ["chat", "tasks", "create"]) $(`#view-${view}`).hidden = name !== view;
   if (name === "tasks") loadTasks();
+  if (name === "create") loadArtifacts();
 }
 
 // ---------------------------------------------------------------- chat
@@ -147,6 +148,7 @@ async function sendChat(event) {
       else if (e.type === "token") reply.body.textContent += e.content;
       else if (e.type === "done") {
         reply.node.append(el("span", { class: "meta" }, `${e.tokens} tokens · ${(e.duration_ms / 1000).toFixed(1)} s · ${e.tokens_per_s ?? "?"} tokens/s`));
+        speak(reply.body.textContent);
       } else if (e.type === "error") {
         reply.node.append(el("span", { class: "meta error" }, e.message));
       }
@@ -163,6 +165,181 @@ async function sendChat(event) {
     loadConversations();
     refreshStatus();
   }
+}
+
+// ---------------------------------------------------------------- voice
+
+let recorder = null;
+let recordTimer = null;
+let caps = {};
+
+function speak(text) {
+  if (!$("#speak-answers").checked || !("speechSynthesis" in window) || !text.trim()) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+function setMic(on) {
+  $("#mic").setAttribute("aria-pressed", String(on));
+  $("#mic").textContent = on ? "■ Stop recording" : "🎤 Speak";
+}
+
+async function toggleMic() {
+  const note = $("#voice-note");
+  if (recorder) { recorder.stop(); return; }
+  if (!caps.voice_input) {
+    note.textContent = "Voice input is not installed yet (run scripts\\install-phase7.ps1).";
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    note.textContent = `Microphone not available: ${err.message}`;
+    return;
+  }
+  const chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.addEventListener("dataavailable", (e) => chunks.push(e.data));
+  recorder.addEventListener("stop", async () => {
+    clearTimeout(recordTimer);
+    stream.getTracks().forEach((t) => t.stop());
+    const type = recorder.mimeType || "audio/webm";
+    recorder = null;
+    setMic(false);
+    note.textContent = "Understanding your speech…";
+    try {
+      const r = await fetch("/speech/transcribe", { method: "POST", headers: { "Content-Type": type },
+        body: new Blob(chunks, { type }) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.message || `HTTP ${r.status}`);
+      if (!body.text) { note.textContent = "I did not catch any words - try again."; return; }
+      note.textContent = `Heard in ${body.seconds} s`;
+      $("#chat-input").value = body.text;
+      $("#chat-form").requestSubmit();
+    } catch (err) {
+      note.textContent = err.message;
+    }
+  });
+  recorder.start();
+  setMic(true);
+  note.textContent = "Listening… click Stop recording when you are done.";
+  recordTimer = setTimeout(() => recorder?.stop(), 60000);
+}
+
+// ---------------------------------------------------------------- create (files, images, videos)
+
+let creating = false;
+const CREATE_HINTS = {
+  file: 'Describe the file (e.g. "a CSV of the 10 largest countries with population")',
+  image: 'Describe the picture (e.g. "a lighthouse on a cliff at sunset, dramatic clouds")',
+  video: 'Describe the video idea (e.g. "a short story about a robot learning to paint")',
+};
+
+function createKind() {
+  return document.querySelector('input[name="kind"]:checked').value;
+}
+
+function updateCreateForm() {
+  const kind = createKind();
+  $("#create-label").textContent = CREATE_HINTS[kind];
+  const note = $("#create-note");
+  if (kind === "image" && !caps.images) note.textContent = "Image generation is not installed yet.";
+  else if (kind === "video" && !caps.video) note.textContent = "Video (FFmpeg) is not installed yet.";
+  else if (kind === "video" && !caps.images) note.textContent = "No image model: videos will use plain backgrounds.";
+  else if (kind === "image") note.textContent = "About 30 s to 2 min per image on this PC.";
+  else if (kind === "video") note.textContent = "Several minutes: one picture per scene.";
+  else note.textContent = "";
+}
+
+function showArtifact(a) {
+  const box = $("#create-result");
+  const url = `/artifacts/${a.artifact_id ?? a.id}/content`;
+  const title = el("h3", {}, `${a.kind}: ${a.name ?? a.meta?.filename ?? ""}`);
+  let body;
+  if (a.kind === "image") body = el("img", { src: url, alt: a.prompt ?? "generated image" });
+  else if (a.kind === "video") body = el("video", { src: url, controls: "" });
+  else body = el("a", { href: url, download: "" }, "Download the file");
+  const meta = a.meta ? el("pre", {}, JSON.stringify(a.meta.storyboard ?? a.meta, null, 2)) : null;
+  box.replaceChildren(el("section", { class: "preview" }, title, body, meta));
+}
+
+async function loadArtifacts() {
+  const list = $("#artifact-list");
+  try {
+    const { artifacts } = await getJSON("/artifacts");
+    list.replaceChildren(...artifacts.map((a) => el("li", {},
+      el("button", { type: "button", disabled: a.status === "done" ? null : "",
+        onclick: () => showArtifact(a) },
+        `${{ file: "📄", image: "🖼️", video: "🎬" }[a.kind]} ${a.name ?? a.prompt.slice(0, 40)}`,
+        el("small", {}, `${a.status}${a.duration_ms ? ` · ${(a.duration_ms / 1000).toFixed(0)} s` : ""}`)))));
+  } catch (err) {
+    list.replaceChildren(el("li", { class: "error" }, err.message));
+  }
+}
+
+function describeCreate(e) {
+  switch (e.type) {
+    case "start": return [`Started (${e.kind})`];
+    case "agent_start": return [`${e.agent} writing…`];
+    case "agent_done": return [`${e.agent} finished: ${e.tokens ?? "?"} tokens in ${(e.duration_ms / 1000).toFixed(1)} s`];
+    case "storyboard": return [`Storyboard "${e.title}": ${e.scenes.map((x) => x.caption).join(" → ")}`];
+    case "stage": return [e.stage];
+    case "progress": return [`… ${e.stage}: ${e.elapsed_s} s`];
+    case "done": return [`Done in ${(e.duration_ms / 1000).toFixed(0)} s: ${e.name}`, "good"];
+    case "end": return [`${e.status}${e.error ? `: ${e.error}` : ""}`, "bad"];
+    default: return [null];
+  }
+}
+
+async function runCreate(event) {
+  event.preventDefault();
+  const kind = createKind();
+  const text = $("#create-input").value.trim();
+  if (!text) return;
+  $("#create-log").replaceChildren();
+  $("#create-result").replaceChildren();
+  $("#create-run").disabled = true;
+  $("#create-cancel").disabled = false;
+  creating = true;
+  const body = kind === "image" ? { prompt: text } : { request: text };
+  try {
+    const response = await postStream(`/create/${kind}`, body);
+    for await (const e of ndjson(response)) {
+      const [line, cls] = describeCreate(e);
+      if (line) {
+        const log = $("#create-log");
+        // Replace the previous heartbeat line instead of piling them up.
+        if (e.type === "progress" && log.lastElementChild?.dataset.progress) log.lastElementChild.remove();
+        const item = el("li", cls ? { class: cls } : {}, line);
+        if (e.type === "progress") item.dataset.progress = "1";
+        log.append(item);
+      }
+      if (e.type === "done") showArtifact({ ...e, prompt: text });
+    }
+  } catch (err) {
+    $("#create-log").append(el("li", { class: "bad" }, err.message));
+  } finally {
+    creating = false;
+    $("#create-run").disabled = false;
+    $("#create-cancel").disabled = true;
+    loadArtifacts();
+    refreshStatus();
+  }
+}
+
+async function cancelCreate() {
+  if (!creating) return;
+  $("#create-cancel").disabled = true;
+  const r = await fetch("/create/cancel", { method: "POST" });
+  const body = await r.json();
+  $("#create-log").append(el("li", { class: "warn" }, r.ok ? `Cancel: ${body.status}` : body.message));
+}
+
+async function loadCaps() {
+  try { caps = await getJSON("/media/status"); } catch { caps = {}; }
+  $("#mic").title = caps.voice_input ? "Speak your message" : "Voice input not installed yet";
+  updateCreateForm();
 }
 
 // ---------------------------------------------------------------- tasks
@@ -288,6 +465,16 @@ function init() {
     if (e.key === "Enter" && e.ctrlKey) $("#chat-form").requestSubmit();
   });
   $("#task-form").addEventListener("submit", runTask);
+  $("#mic").addEventListener("click", toggleMic);
+  $("#create-form").addEventListener("submit", runCreate);
+  $("#create-cancel").addEventListener("click", cancelCreate);
+  for (const radio of document.querySelectorAll('input[name="kind"]')) radio.addEventListener("change", updateCreateForm);
+  try { $("#speak-answers").checked = localStorage.getItem("speakAnswers") === "1"; } catch { /* storage blocked */ }
+  $("#speak-answers").addEventListener("change", (e) => {
+    try { localStorage.setItem("speakAnswers", e.target.checked ? "1" : "0"); } catch { /* storage blocked */ }
+    if (!e.target.checked && "speechSynthesis" in window) speechSynthesis.cancel();
+  });
+  loadCaps();
   $("#task-cancel").addEventListener("click", cancelTask);
   refreshStatus();
   setInterval(refreshStatus, 15000);

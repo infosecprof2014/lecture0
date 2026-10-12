@@ -14,6 +14,7 @@
     <nav aria-label="Sections">
       <button type="button" class="tab" data-view="chat" aria-pressed="true">Chat</button>
       <button type="button" class="tab" data-view="tasks" aria-pressed="false">Tasks</button>
+      <button type="button" class="tab" data-view="create" aria-pressed="false">Create</button>
     </nav>
     <p id="status" class="status" role="status" aria-live="polite">Checking…</p>
   </header>
@@ -32,7 +33,10 @@
           <textarea id="chat-input" rows="3" placeholder="Ask something… (Ctrl+Enter to send)" required></textarea>
           <div class="actions">
             <button type="submit" id="chat-send" class="primary">Send</button>
+            <button type="button" id="mic" aria-pressed="false" title="Speak your message">🎤 Speak</button>
             <button type="button" id="chat-stop" hidden>Stop</button>
+            <label class="toggle"><input type="checkbox" id="speak-answers"> Speak answers</label>
+            <span id="voice-note" class="note" role="status" aria-live="polite"></span>
           </div>
         </form>
       </div>
@@ -55,6 +59,32 @@
         <h2>Progress</h2>
         <ol id="task-log" class="log" aria-live="polite"></ol>
         <div id="task-detail" class="detail"></div>
+      </div>
+    </section>
+    <section id="view-create" class="view" aria-label="Create" hidden>
+      <aside class="side">
+        <h2>Created</h2>
+        <ul id="artifact-list" class="list"></ul>
+      </aside>
+      <div class="pane">
+        <form id="create-form" class="composer">
+          <fieldset class="kinds">
+            <legend>What to create</legend>
+            <label><input type="radio" name="kind" value="file" checked> 📄 File</label>
+            <label><input type="radio" name="kind" value="image"> 🖼️ Image</label>
+            <label><input type="radio" name="kind" value="video"> 🎬 Video</label>
+          </fieldset>
+          <label for="create-input" id="create-label">Describe the file (e.g. "a CSV of the 10 largest countries with population")</label>
+          <textarea id="create-input" rows="3" required></textarea>
+          <div class="actions">
+            <button type="submit" id="create-run" class="primary">Create</button>
+            <button type="button" id="create-cancel" disabled>Cancel</button>
+            <span id="create-note" class="note"></span>
+          </div>
+        </form>
+        <h2>Progress</h2>
+        <ol id="create-log" class="log" aria-live="polite"></ol>
+        <div id="create-result" class="detail"></div>
       </div>
     </section>
   </main>

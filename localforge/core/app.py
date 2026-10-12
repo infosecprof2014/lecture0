@@ -71,6 +71,7 @@ def create_app(
     app = FastAPI(title="LocalForge AI core", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.db = db
+    app.state.free_ram = free_ram
     # One model job at a time, shared by /chat and agent tasks.
     lock = ModelLock(settings.request_timeout_s)
     app.state.model_lock = lock
@@ -255,4 +256,6 @@ def create_app(
 
     from .tasks_api import register_task_routes
     register_task_routes(app, settings, db, lock)
+    from .media_api import register_media_routes
+    register_media_routes(app, settings, db, lock)
     return app

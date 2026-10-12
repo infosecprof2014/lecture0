@@ -52,3 +52,10 @@ pre { background: var(--code-bg); padding: .6rem; border-radius: 6px; overflow-x
   .view { grid-template-columns: 1fr; }
   .side { border-right: 0; border-bottom: 1px solid var(--border); max-height: 30vh; }
 }
+.toggle { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted); font-size: .9rem; }
+.note { color: var(--muted); font-size: .9rem; align-self: center; }
+#mic[aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+.kinds { border: 0; padding: 0; margin: 0 0 .3rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+.kinds legend { font-size: .85rem; color: var(--muted); margin-bottom: .2rem; }
+.preview img, .preview video { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
+.preview img { max-height: 512px; }

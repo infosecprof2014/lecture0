@@ -50,6 +50,20 @@ class Settings:
     backups_path: str = "backups"
     keep_backups: int = 10
     auto_backup_hours: int = 24
+    # Voice and creation (Phase 7). Empty paths are found automatically under tools\ and models\.
+    whisper_model_dir: str = "models/whisper-base"
+    voice_max_mb: int = 10
+    files_max_tokens: int = 1500
+    files_max_kb: int = 200
+    sd_binary: str = ""
+    sd_model: str = ""
+    image_size: int = 512
+    image_steps: int = 1
+    image_ram_mb: int = 2500
+    image_timeout_s: int = 900
+    ffmpeg_binary: str = ""
+    video_max_scenes: int = 4
+    storyboard_max_tokens: int = 700
 
     def resolve(self, relative: str) -> Path:
         p = Path(relative)
@@ -112,7 +126,9 @@ def load_settings(path: Path | str | None = None) -> Settings:
                  "request_timeout_s", "log_max_mb", "log_backups", "max_plan_steps",
                  "max_task_chars", "planner_max_tokens", "coder_max_tokens", "reviewer_max_tokens",
                  "tester_max_tokens", "fixer_max_tokens", "test_timeout_s", "sandbox_memory_mb",
-                 "keep_backups", "auto_backup_hours"):
+                 "keep_backups", "auto_backup_hours", "voice_max_mb", "files_max_tokens", "files_max_kb",
+                 "image_size", "image_steps", "image_ram_mb", "image_timeout_s", "video_max_scenes",
+                 "storyboard_max_tokens"):
         if getattr(settings, name) <= 0:
             raise SettingsError(f"Setting '{name}' must be greater than 0")
     if settings.max_fix_rounds < 0:
