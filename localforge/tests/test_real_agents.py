@@ -28,9 +28,10 @@ def test_real_agent_task(tmp_path):
         pytest.skip(msg)
 
     # Keep it short on a slow CPU: at most 2 steps and 1 revision.
-    settings = replace(Settings(), model=MODEL, max_plan_steps=2, max_revisions=1,
-                       db_path=str(tmp_path / "real.db"), log_path=str(tmp_path / "core.log"))
-    with TestClient(create_app(settings)) as client:
+    settings = replace(Settings(), model=MODEL, max_plan_steps=2, max_revisions=1, max_fix_rounds=1,
+                       db_path=str(tmp_path / "real.db"), log_path=str(tmp_path / "core.log"),
+                       projects_path=str(tmp_path / "projects"))
+    with TestClient(create_app(settings, extra_hosts=("testserver",))) as client:
         with client.stream("POST", "/tasks", json={
                 "request": "Write a Python function is_even(n) that returns True if n is even."}) as r:
             assert r.status_code == 200
@@ -44,3 +45,5 @@ def test_real_agent_task(tmp_path):
         assert step["verdict"] in ("approve", "revise")
         assert step["revisions"] <= 1
         ast.parse(step["code"])  # valid Python; nothing is executed
+    # Phase 4: tests were written and run in the sandbox (the outcome depends on the model)
+    assert task["test_status"] in ("passed", "failed", "no_tests"), task["test_status"]

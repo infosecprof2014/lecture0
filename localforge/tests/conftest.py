@@ -40,7 +40,8 @@ def make_client(settings, fake, ram):
     clients = []
 
     def _make(s: Settings | None = None) -> TestClient:
-        app = create_app(s or settings, ollama_transport=fake.transport(), free_ram=lambda: ram["bytes"])
+        app = create_app(s or settings, ollama_transport=fake.transport(), free_ram=lambda: ram["bytes"],
+                         extra_hosts=("testserver",))
         c = TestClient(app)
         c.__enter__()
         clients.append(c)

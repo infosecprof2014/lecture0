@@ -6,11 +6,14 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
@@ -22,6 +25,9 @@ from .ollama_client import OllamaClient, OllamaUnavailable
 
 log = logging.getLogger("localforge.core")
 MB = 1024 * 1024
+UI_DIR = Path(__file__).resolve().parent.parent / "ui"
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 class ChatRequest(BaseModel):
@@ -48,8 +54,10 @@ def create_app(
     *,
     ollama_transport: httpx.AsyncBaseTransport | None = None,
     free_ram: Callable[[], int] = free_ram_bytes,
+    extra_hosts: tuple[str, ...] = (),
 ) -> FastAPI:
     db = Database(settings.db_file)
+    allowed_hosts = LOCAL_HOSTS | set(extra_hosts)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -66,6 +74,32 @@ def create_app(
     # One model job at a time, shared by /chat and agent tasks.
     lock = ModelLock(settings.request_timeout_s)
     app.state.model_lock = lock
+
+    @app.middleware("http")
+    async def local_only(request: Request, call_next):
+        """Browser protections now that a web page talks to this API.
+
+        - Host check: a web page on another site cannot reach this service through DNS rebinding.
+        - Origin check: a page on another site cannot make your browser start chats or tasks here.
+        """
+        host = urlsplit("//" + request.headers.get("host", "")).hostname or ""
+        if host not in allowed_hosts:
+            log.warning("Refused request with Host %r", request.headers.get("host"))
+            return error(400, "bad_host", "This service only answers on 127.0.0.1 or localhost.")
+        origin = request.headers.get("origin")
+        if origin and request.method not in SAFE_METHODS:
+            o = urlsplit(origin)
+            if o.hostname not in allowed_hosts or (o.port or 80) != settings.port:
+                log.warning("Refused %s %s from origin %r", request.method, request.url.path, origin)
+                return error(403, "bad_origin", "Requests from other websites are not allowed.")
+        return await call_next(request)
+
+    if UI_DIR.is_dir():
+        app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
+
+        @app.get("/", include_in_schema=False)
+        async def index():
+            return FileResponse(UI_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     @app.exception_handler(Exception)
     async def unexpected(request: Request, exc: Exception):

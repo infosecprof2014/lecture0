@@ -27,7 +27,7 @@ def test_real_model_answers(tmp_path):
         pytest.skip(msg)
 
     settings = Settings(model=MODEL, db_path=str(tmp_path / "real.db"), log_path=str(tmp_path / "core.log"))
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, extra_hosts=("testserver",))) as client:
         status, events = read_stream(client, {"message": "Say OK"})
     assert status == 200, events
     assert events[-1]["type"] == "done", events[-1]

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>LocalForge AI</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <h1>LocalForge AI</h1>
+    <nav aria-label="Sections">
+      <button type="button" class="tab" data-view="chat" aria-pressed="true">Chat</button>
+      <button type="button" class="tab" data-view="tasks" aria-pressed="false">Tasks</button>
+    </nav>
+    <p id="status" class="status" role="status" aria-live="polite">Checking…</p>
+  </header>
+
+  <main>
+    <section id="view-chat" class="view" aria-label="Chat">
+      <aside class="side">
+        <button type="button" id="new-chat" class="primary">New chat</button>
+        <h2>Conversations</h2>
+        <ul id="conv-list" class="list"></ul>
+      </aside>
+      <div class="pane">
+        <div id="messages" class="messages" aria-live="polite" aria-busy="false"></div>
+        <form id="chat-form" class="composer">
+          <label for="chat-input" class="visually-hidden">Message</label>
+          <textarea id="chat-input" rows="3" placeholder="Ask something… (Ctrl+Enter to send)" required></textarea>
+          <div class="actions">
+            <button type="submit" id="chat-send" class="primary">Send</button>
+            <button type="button" id="chat-stop" hidden>Stop</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="view-tasks" class="view" aria-label="Tasks" hidden>
+      <aside class="side">
+        <h2>Tasks</h2>
+        <ul id="task-list" class="list"></ul>
+      </aside>
+      <div class="pane">
+        <form id="task-form" class="composer">
+          <label for="task-input">What should the agents build?</label>
+          <textarea id="task-input" rows="3" placeholder="e.g. Write a Python function is_palindrome(s) that ignores case and punctuation." required></textarea>
+          <div class="actions">
+            <button type="submit" id="task-run" class="primary">Run task</button>
+            <button type="button" id="task-cancel" disabled>Cancel</button>
+          </div>
+        </form>
+        <h2>Progress</h2>
+        <ol id="task-log" class="log" aria-live="polite"></ol>
+        <div id="task-detail" class="detail"></div>
+      </div>
+    </section>
+  </main>
+  <noscript><p class="error">LocalForge needs JavaScript enabled in this browser.</p></noscript>
+</body>
+</html>
