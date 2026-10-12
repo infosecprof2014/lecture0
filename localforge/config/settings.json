@@ -1,0 +1,14 @@
+{
+  "model": "llama3.2:3b",
+  "host": "127.0.0.1",
+  "port": 8000,
+  "ollama_url": "http://127.0.0.1:11434",
+  "ram_reserve_mb": 500,
+  "max_history_messages": 20,
+  "max_message_chars": 20000,
+  "request_timeout_s": 600,
+  "db_path": "database/localforge.db",
+  "log_path": "logs/core.log",
+  "log_max_mb": 5,
+  "log_backups": 5
+}
