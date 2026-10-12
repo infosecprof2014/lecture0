@@ -110,6 +110,21 @@ def register_task_routes(app: FastAPI, settings: Settings, db: Database, lock: M
         task["agent_summary"] = agent_summary(task["agent_runs"])
         return task
 
+    @app.get("/tasks/{task_id}/files")
+    async def task_files(task_id: int):
+        task = db.get_task(task_id)
+        if task is None:
+            return error(404, "not_found", f"Task {task_id} does not exist")
+        files = {}
+        if task.get("project_dir"):
+            from pathlib import Path
+            folder = Path(task["project_dir"])
+            for name in ("solution.py", "test_solution.py"):
+                f = folder / name
+                if f.is_file():
+                    files[name] = f.read_text(encoding="utf-8")
+        return {"task_id": task_id, "project_dir": task.get("project_dir"), "files": files}
+
     @app.post("/tasks/{task_id}/cancel")
     async def cancel_task(task_id: int):
         running = app.state.running_task

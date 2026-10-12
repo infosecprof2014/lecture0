@@ -62,7 +62,19 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     duration_ms  INTEGER,
     created_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS test_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    round        INTEGER NOT NULL,
+    status       TEXT NOT NULL,
+    passed       INTEGER NOT NULL DEFAULT 0,
+    failed       INTEGER NOT NULL DEFAULT 0,
+    output       TEXT,
+    duration_ms  INTEGER,
+    created_at   TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_steps_task ON task_steps(task_id, number);
+CREATE INDEX IF NOT EXISTS idx_test_runs_task ON test_runs(task_id, id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON agent_runs(task_id, id);
 """
 
@@ -77,6 +89,11 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(SCHEMA)
+            # Columns added after Phase 3 (databases created earlier lack them).
+            have = {r["name"] for r in con.execute("PRAGMA table_info(tasks)")}
+            for column in ("test_status TEXT", "project_dir TEXT"):
+                if column.split()[0] not in have:
+                    con.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -226,4 +243,29 @@ class Database:
         result["plan"] = json.loads(result["plan"]) if result["plan"] else None
         result["steps"] = [{**dict(s), "issues": json.loads(s["issues"]) if s["issues"] else []} for s in steps]
         result["agent_runs"] = [dict(r) for r in runs]
+        result["test_runs"] = self.test_runs(task_id)
         return result
+
+    # ------------------------------------------------------------ tests and projects (Phase 4)
+
+    def set_task_project(self, task_id: int, project_dir: str) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE tasks SET project_dir = ? WHERE id = ?", (project_dir, task_id))
+
+    def set_test_status(self, task_id: int, test_status: str) -> None:
+        with self._connect() as con:
+            con.execute("UPDATE tasks SET test_status = ? WHERE id = ?", (test_status, task_id))
+
+    def add_test_run(self, task_id: int, round_no: int, status: str, passed: int, failed: int,
+                     output: str, duration_ms: int) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "INSERT INTO test_runs (task_id, round, status, passed, failed, output, duration_ms, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (task_id, round_no, status, passed, failed, output, duration_ms, _now()))
+            return int(cur.lastrowid)
+
+    def test_runs(self, task_id: int) -> list[dict]:
+        with self._connect() as con:
+            rows = con.execute("SELECT * FROM test_runs WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+        return [dict(r) for r in rows]

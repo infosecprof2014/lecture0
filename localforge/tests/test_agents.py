@@ -45,7 +45,9 @@ def agents_called(fake: FakeOllama) -> list[str]:
     out = []
     for req in fake.chat_requests:
         system = req["messages"][0]["content"]
-        out.append("planner" if "the Planner" in system else "coder" if "the Coder" in system else "reviewer")
+        out.append("planner" if "the Planner" in system else "tester" if "the Tester" in system
+                   else "fixer" if "Rewrite the WHOLE solution" in system
+                   else "coder" if "the Coder" in system else "reviewer")
     return out
 
 
@@ -74,17 +76,17 @@ def test_task_happy_path(client, fake):
     types = [e["type"] for e in events]
     assert types[0] == "task_start" and types[-1] == "task_end"
     assert events[-1]["status"] == "done"
-    assert [e["agent"] for e in events if e["type"] == "agent_start"] == \
+    assert [e["agent"] for e in events if e["type"] == "agent_start"][:5] == \
         ["planner", "coder", "reviewer", "coder", "reviewer"]
     # planner and reviewer asked for structured JSON; coder did not
-    assert ["format" in r for r in fake.chat_requests] == [True, False, True, False, True]
+    assert ["format" in r for r in fake.chat_requests][:5] == [True, False, True, False, True]
 
     task = client.get(f"/tasks/{events[0]['task_id']}").json()
     assert task["status"] == "done" and len(task["steps"]) == 2
     for step in task["steps"]:
         assert step["verdict"] == "approve" and step["revisions"] == 0
         ast.parse(step["code"])
-    assert len(task["agent_runs"]) == 5 and all(r["status"] == "ok" for r in task["agent_runs"])
+    assert all(r["status"] == "ok" for r in task["agent_runs"])
     assert task["agent_summary"]["coder"]["calls"] == 2
 
 
@@ -112,7 +114,7 @@ def test_revisions_capped(client, fake, settings):
 def test_syntax_error_skips_reviewer(client, fake):
     fake.scripted = [plan("add"), BAD, GOOD, APPROVE]
     events = run_task(client)
-    assert agents_called(fake) == ["planner", "coder", "coder", "reviewer"]
+    assert agents_called(fake)[:4] == ["planner", "coder", "coder", "reviewer"]
     assert "SyntaxError" in fake.chat_requests[2]["messages"][1]["content"]
     step = client.get(f"/tasks/{events[0]['task_id']}").json()["steps"][0]
     assert step["verdict"] == "approve" and step["revisions"] == 1

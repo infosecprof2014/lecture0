@@ -39,6 +39,13 @@ class Settings:
     coder_max_tokens: int = 700
     reviewer_max_tokens: int = 300
     agent_temperature: float = 0.2
+    # Running generated code (Phase 4)
+    projects_path: str = "projects"
+    tester_max_tokens: int = 600
+    fixer_max_tokens: int = 1000
+    max_fix_rounds: int = 2
+    test_timeout_s: int = 10
+    sandbox_memory_mb: int = 512
 
     def resolve(self, relative: str) -> Path:
         p = Path(relative)
@@ -51,6 +58,10 @@ class Settings:
     @property
     def log_file(self) -> Path:
         return self.resolve(self.log_path)
+
+    @property
+    def projects_dir(self) -> Path:
+        return self.resolve(self.projects_path)
 
 
 def default_settings_path() -> Path:
@@ -91,9 +102,12 @@ def load_settings(path: Path | str | None = None) -> Settings:
         )
     for name in ("port", "ram_reserve_mb", "max_history_messages", "max_message_chars",
                  "request_timeout_s", "log_max_mb", "log_backups", "max_plan_steps",
-                 "max_task_chars", "planner_max_tokens", "coder_max_tokens", "reviewer_max_tokens"):
+                 "max_task_chars", "planner_max_tokens", "coder_max_tokens", "reviewer_max_tokens",
+                 "tester_max_tokens", "fixer_max_tokens", "test_timeout_s", "sandbox_memory_mb"):
         if getattr(settings, name) <= 0:
             raise SettingsError(f"Setting '{name}' must be greater than 0")
+    if settings.max_fix_rounds < 0:
+        raise SettingsError("Setting 'max_fix_rounds' must be 0 or more")
     if settings.max_revisions < 0:
         raise SettingsError("Setting 'max_revisions' must be 0 or more")
     if not 0 <= settings.agent_temperature <= 2:

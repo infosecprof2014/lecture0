@@ -20,7 +20,8 @@ GB = 1024 ** 3
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(db_path=str(tmp_path / "test.db"), log_path=str(tmp_path / "core.log"))
+    return Settings(db_path=str(tmp_path / "test.db"), log_path=str(tmp_path / "core.log"),
+                    projects_path=str(tmp_path / "projects"))
 
 
 @pytest.fixture
